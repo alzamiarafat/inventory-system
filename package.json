@@ -1,0 +1,14 @@
+{
+  "name": "limited-sneaker-drop",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "npm -w backend run dev & npm -w frontend run dev",
+    "dev:backend": "npm -w backend run dev",
+    "dev:frontend": "npm -w frontend run dev"
+  }
+}
+
