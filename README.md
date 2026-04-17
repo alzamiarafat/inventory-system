@@ -19,8 +19,11 @@ cd inventory-system
 Fresh project setup:
 
 ```bash
+cp .env.example .env
 docker compose up -d
 ```
+
+Docker reads database credentials from the root `.env` file. `.env.example` is only a template, and `.env` is ignored by Git.
 
 That starts:
 
