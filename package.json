@@ -9,6 +9,9 @@
     "dev": "npm -w backend run dev & npm -w frontend run dev",
     "dev:backend": "npm -w backend run dev",
     "dev:frontend": "npm -w frontend run dev"
+  },
+  "dependencies": {
+    "pg": "^8.20.0",
+    "pg-hstore": "^2.3.4"
   }
 }
-
