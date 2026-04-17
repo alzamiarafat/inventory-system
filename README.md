@@ -1,80 +1,93 @@
 ## Limited Edition Sneaker Drop (Real-Time)
 
 ### Stack
+
 - **Frontend**: React (Vite) + Tailwind + Socket.io client
 - **Backend**: Node.js + Express + Socket.io
 - **DB**: Postgres
 - **ORM**: Sequelize
 
 ### How to run locally
-Start Postgres:
+
+Clone the repository:
 
 ```bash
-cd limited-sneaker-drop
+git clone git@github.com:alzamiarafat/inventory-system.git
+cd inventory-system
+```
+
+Fresh project setup:
+
+```bash
 docker compose up -d
 ```
 
-Backend:
+That starts:
+
+- Postgres
+- Backend on `http://localhost:4000`
+- Frontend on `http://localhost:5173`
+
+The backend container automatically runs:
 
 ```bash
-cp backend/.env.example backend/.env
-cd backend
-npm install
 npm run db:migrate
 npm run db:seed:all
-npm run dev
-```
-
-Frontend:
-
-```bash
-cp frontend/.env.example frontend/.env
-cd frontend
-npm install
-npm run dev
 ```
 
 Open `http://localhost:5173`.
 
-### Core architecture notes
+To reset the database and start from fresh seed data:
 
-### Atomic reservation + no overselling
-- Reservation endpoint: `POST /api/drops/:dropId/reserve`
-- The backend does an **atomic conditional update** inside a DB transaction:
-  - `UPDATE Drops SET availableStock = availableStock - 1 WHERE id = ? AND availableStock > 0 ... RETURNING *`
-- Because the decrement happens in a single guarded statement, **100 concurrent requests for the last unit** result in **only one success** (the rest get `409`).
+```bash
+docker compose down -v
+docker compose up -d
+```
 
-### 60-second expiration + stock recovery
-- Each reservation is created with an `expiresAt = now + 60s` and `status = ACTIVE`.
-- A small in-process worker (`backend/src/expiryWorker.js`) runs every ~1s:
-  - selects expired ACTIVE reservations in a transaction using row locks (`FOR UPDATE SKIP LOCKED`)
-  - marks them `EXPIRED`
-  - increments `Drops.availableStock` by 1 (stock recovery)
-  - broadcasts a Socket.io event so dashboards refresh instantly
+If you change dependencies or Dockerfiles, rebuild with:
 
-### Purchase flow (must be reserved)
-- Purchase endpoint: `POST /api/reservations/:reservationId/purchase`
-- Requires the purchasing `username` to match the reservation’s `userId`, and the reservation must be `ACTIVE` + unexpired.
-- On success it creates a `Purchase` row and marks the reservation `CONVERTED`.
+```bash
+docker compose up -d --build
+```
 
-### Drop activity feed (top 3 purchasers per drop)
-- Dashboard data endpoint: `GET /api/drops/active`
-- It returns each active drop plus `latestPurchasers` (top 3), computed in SQL using a window function.
+### Database setup
 
-### Useful endpoints
-- **List active drops (with top 3 purchasers)**: `GET /api/drops/active`
-- **Create a new drop**: `POST /api/drops`
-  - body: `{ "name": "...", "priceCents": 22000, "totalStock": 100, "startsAt": "2026-04-16T00:00:00Z" }`
-- **Reserve**: `POST /api/drops/:dropId/reserve`
-  - body: `{ "username": "alice" }`
-- **Purchase**: `POST /api/reservations/:reservationId/purchase`
-  - body: `{ "username": "alice" }`
+The SQL schema is managed with Sequelize migrations in `backend/migrations`.
+Docker runs migrations and seeders automatically before starting the backend:
 
-### Real-time behavior
-- Backend emits `dropsChanged` via Socket.io on:
-  - successful reservation
-  - successful purchase
-  - reservation expiration / stock recovery
-  - drop creation
-- Frontend listens for `dropsChanged` and refetches `GET /api/drops/active`.
+```bash
+npm run db:migrate
+npm run db:seed:all
+```
 
+Main tables:
+
+- `Users`
+- `Drops`
+- `Reservations`
+- `Purchases`
+
+### Architecture choice
+
+The backend uses a **controller-service-repository architecture**:
+
+- **Controller**: handles request validation and response.
+- **Service**: handles business logic and transactions.
+- **Repository**: handles Sequelize database queries.
+
+The 60-second reservation uses a **temporary hold mechanism**:
+
+- When a user reserves an item, stock is reduced by 1.
+- A reservation is created with `expiresAt = now + 60 seconds`.
+- If the user purchases in time, the reservation becomes `CONVERTED`.
+- If the user does not purchase, the reservation becomes `EXPIRED`.
+
+Stock recovery uses an **in-process expiration worker**. It runs every second, finds expired reservations, returns the stock, and sends a Socket.io event so all clients update.
+
+### Concurrency
+
+Overselling is prevented with a **PostgreSQL atomic update**.
+
+The app decreases stock only when `availableStock > 0`, and this check/update happens in one database operation inside a transaction. So if many users try to reserve the last item at the same time, only one request succeeds.
+
+The expiration worker also uses row locking, so the same expired reservation is not recovered twice.
